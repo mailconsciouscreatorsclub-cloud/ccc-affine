@@ -1,0 +1,197 @@
+{
+  "project": {
+    "id": "voice-control-affine",
+    "name": "Voice Control Module for AFFiNE",
+    "version": "1.0.0-alpha",
+    "status": "Phase 2 - Core Infrastructure",
+    "repository": "ccc-affine-canary",
+    "branch": "feature/voice-control-foundation",
+    "created": "2025-09-29T16:20:00Z",
+    "team": {
+      "lead": "Warp",
+      "members": ["Claude", "Codex", "Gemini", "Vision AI"]
+    }
+  },
+  
+  "phases": {
+    "completed": ["Phase 1: Foundation and Architecture"],
+    "current": "Phase 2: Core Infrastructure",
+    "upcoming": [
+      "Phase 3: Navigation Integration",
+      "Phase 4: Content Creation",
+      "Phase 5: Advanced Features",
+      "Phase 6: Testing & QA",
+      "Phase 7: Documentation",
+      "Phase 8: Deployment"
+    ]
+  },
+  
+  "architecture": {
+    "decisions": [
+      {
+        "id": "arch-001",
+        "title": "Event-Driven Voice Control",
+        "description": "Use event-driven architecture for loose coupling",
+        "rationale": "Allows extensibility and easier testing",
+        "decidedBy": "Warp",
+        "date": "2025-09-29"
+      },
+      {
+        "id": "arch-002",
+        "title": "Provider Abstraction Layer",
+        "description": "Abstract speech providers behind common interface",
+        "rationale": "Support multiple providers without code changes",
+        "decidedBy": "Warp",
+        "date": "2025-09-29"
+      }
+    ],
+    "patterns": [
+      "Service-Oriented Architecture",
+      "Command Pattern for voice commands",
+      "Observer Pattern for events",
+      "Factory Pattern for providers",
+      "Strategy Pattern for command matching"
+    ]
+  },
+  
+  "modules": {
+    "completed": [
+      {
+        "name": "types",
+        "path": "types/",
+        "completedBy": "Warp",
+        "status": "complete",
+        "files": ["index.ts", "commands.ts", "providers.ts"]
+      },
+      {
+        "name": "voice-control-service",
+        "path": "services/voice-control.service.ts",
+        "completedBy": "Warp",
+        "status": "complete",
+        "linesOfCode": 550
+      }
+    ],
+    "inProgress": [],
+    "planned": [
+      {
+        "name": "VoiceCommandRegistry",
+        "assignedTo": "Claude",
+        "priority": 1,
+        "estimatedHours": 8
+      },
+      {
+        "name": "VoiceNavigationService",
+        "assignedTo": "Codex",
+        "priority": 2,
+        "estimatedHours": 6
+      },
+      {
+        "name": "VoiceFeedbackService",
+        "assignedTo": "Codex",
+        "priority": 3,
+        "estimatedHours": 4
+      },
+      {
+        "name": "WebSpeechProvider",
+        "assignedTo": "Claude",
+        "priority": 4,
+        "estimatedHours": 10
+      }
+    ]
+  },
+  
+  "tasks": {
+    "sprint1": {
+      "id": "sprint-2.1",
+      "name": "Core Services Implementation",
+      "duration": "Week 3",
+      "tasks": [
+        {
+          "id": "task-001",
+          "title": "Implement VoiceCommandRegistry",
+          "assignedTo": "Claude",
+          "status": "ready",
+          "description": "Create command registration and matching system",
+          "dependencies": [],
+          "acceptance": [
+            "Register/unregister commands",
+            "Fuzzy matching algorithm",
+            "Command prioritization",
+            "Pattern extraction"
+          ]
+        },
+        {
+          "id": "task-002",
+          "title": "Implement VoiceNavigationService",
+          "assignedTo": "Codex",
+          "status": "ready",
+          "description": "Context tracking and navigation state management",
+          "dependencies": [],
+          "acceptance": [
+            "Track current workspace/document",
+            "Navigation history",
+            "Context validation",
+            "Integration with AppSidebar"
+          ]
+        },
+        {
+          "id": "task-003",
+          "title": "Create test harness",
+          "assignedTo": "Gemini",
+          "status": "ready",
+          "description": "Set up testing infrastructure",
+          "dependencies": ["task-001", "task-002"],
+          "acceptance": [
+            "Unit test framework",
+            "Mock providers",
+            "Test data generators",
+            "Coverage reporting"
+          ]
+        }
+      ]
+    }
+  },
+  
+  "knowledge": {
+    "constraints": [
+      "Must work offline with Web Speech API",
+      "Latency must be under 500ms",
+      "Support minimum 10 languages",
+      "WCAG AAA compliance required"
+    ],
+    "insights": [
+      {
+        "source": "Warp",
+        "insight": "Affine uses @toeverything/infra Service pattern",
+        "impact": "Follow same pattern for consistency"
+      },
+      {
+        "source": "Claude",
+        "insight": "Web Speech API requires HTTPS in production",
+        "impact": "Need SSL certificates for testing"
+      }
+    ],
+    "decisions": [],
+    "blockers": []
+  },
+  
+  "quality": {
+    "standards": {
+      "coverage": "80% minimum",
+      "performance": "Sub-500ms command execution",
+      "accessibility": "WCAG AAA",
+      "documentation": "100% public API coverage"
+    },
+    "metrics": {
+      "linesOfCode": 862,
+      "testCoverage": 0,
+      "documentationCoverage": 100
+    }
+  },
+  
+  "communication": {
+    "handoffs": [],
+    "reviews": [],
+    "questions": []
+  }
+}

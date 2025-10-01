@@ -1,0 +1,94 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp-server"],
+      "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "0"
+      },
+      "description": "Playwright MCP Server for browser automation and testing",
+      "capabilities": {
+        "browserControl": true,
+        "testing": true,
+        "screenshots": true,
+        "debugging": true
+      }
+    }
+  },
+  "agents": {
+    "warp": {
+      "role": "Project Lead & Integration Architect",
+      "mcpAccess": ["playwright"],
+      "permissions": {
+        "browserLaunch": true,
+        "screenshotCapture": true,
+        "pageNavigation": true,
+        "elementInteraction": true,
+        "testExecution": true
+      },
+      "useCases": [
+        "Integration testing coordination",
+        "Visual regression validation",
+        "End-to-end flow verification",
+        "UI component validation"
+      ]
+    },
+    "claude": {
+      "role": "Backend & Testing Specialist",
+      "mcpAccess": ["playwright"],
+      "permissions": {
+        "browserLaunch": true,
+        "screenshotCapture": true,
+        "pageNavigation": true,
+        "elementInteraction": true,
+        "testExecution": true,
+        "testDebugging": true
+      },
+      "useCases": [
+        "Test suite execution",
+        "Test debugging and fixing",
+        "Performance testing",
+        "API endpoint testing via browser",
+        "Cross-browser compatibility validation"
+      ]
+    },
+    "codex": {
+      "role": "Frontend & UI Specialist",
+      "mcpAccess": ["playwright"],
+      "permissions": {
+        "browserLaunch": true,
+        "screenshotCapture": true,
+        "pageNavigation": true,
+        "elementInteraction": true,
+        "visualTesting": true,
+        "componentTesting": true
+      },
+      "useCases": [
+        "UI component testing",
+        "Visual regression testing",
+        "Accessibility testing",
+        "Responsive design validation",
+        "Storybook integration testing"
+      ]
+    }
+  },
+  "project": {
+    "name": "AFFiNE Voice Control",
+    "playwrightVersion": "1.52.0",
+    "testDirectory": "tests",
+    "browsers": ["chromium", "firefox", "webkit"],
+    "baseURL": "http://localhost:3000",
+    "testMatch": "**/*.spec.ts",
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "sharedResources": {
+    "testData": "tests/kit/src",
+    "fixtures": "tests/affine-local/e2e",
+    "screenshots": "test-results/screenshots",
+    "videos": "test-results/videos",
+    "traces": "test-results/traces"
+  }
+}
