@@ -1,1 +1,1 @@
-npx --yes lint-staged && npx oxlint -c oxlint.json --deny-warnings
+﻿npx --yes lint-staged && npx oxlint -c oxlint.json --deny-warnings
