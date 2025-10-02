@@ -1,0 +1,140 @@
+{
+  "timestamp": "2025-10-02T15:05:00Z",
+  "author": "warp",
+  "summary": "🎯 Task Assignment: Copilot - Lint Error Cleanup (167 errors)",
+  "details": {
+    "assignee": "copilot",
+    "taskId": "T3.0.1",
+    "taskTitle": "Voice Control Module Lint Cleanup",
+    "priority": "HIGH",
+    "status": "assigned",
+    "estimatedTime": "2-3 hours",
+    "rationale": "Our recent git commit attempt revealed 167 lint errors in the voice control module. These errors are blocking clean commits and need immediate attention. Copilot's rapid development skills make this a perfect fit.",
+    "taskBreakdown": {
+      "phase1": {
+        "name": "UTF-8 BOM Cleanup",
+        "duration": "30 min",
+        "files": [
+          "All .ts, .tsx, .css.ts files with BOM markers",
+          "~30 files affected"
+        ],
+        "fix": "Remove UTF-8 BOM characters from file headers"
+      },
+      "phase2": {
+        "name": "Unused Imports Cleanup",
+        "duration": "45 min",
+        "issues": "~50 unused import errors",
+        "fix": "Remove unused type/value imports across voice control files"
+      },
+      "phase3": {
+        "name": "Code Style Fixes",
+        "duration": "45 min",
+        "issues": [
+          "eslint-plugin-unicorn violations (prefer-dom-node-dataset, prefer-dom-node-append)",
+          "typescript-eslint violations (no-non-null-assertion, consistent-type-imports)",
+          "Unused parameters/variables"
+        ],
+        "fix": "Apply recommended fixes for modern code patterns"
+      },
+      "phase4": {
+        "name": "Validation",
+        "duration": "15 min",
+        "actions": [
+          "Run: npx oxlint -c oxlint.json --deny-warnings",
+          "Verify: 0 errors",
+          "Test commit with pre-commit hook"
+        ]
+      }
+    },
+    "errorBreakdown": {
+      "utf8BOM": "~30 files (irregular whitespace errors)",
+      "unusedImports": "~50 errors (type/value imports never used)",
+      "codeStyleViolations": {
+        "domNodeDataset": "~15 errors (use dataset instead of getAttribute/setAttribute)",
+        "domNodeAppend": "~5 errors (use append() instead of appendChild())",
+        "nonNullAssertion": "~10 errors (forbidden ! operator)",
+        "consistentTypeImports": "~15 errors (use import type)",
+        "unusedParameters": "~25 errors (parameters declared but never used)",
+        "miscellaneous": "~17 errors (various violations)"
+      },
+      "total": 167
+    },
+    "filesToFix": {
+      "voiceControlServices": [
+        "services/voice-control.service.ts",
+        "services/voice-command-registry.service.ts",
+        "services/voice-navigation.service.ts",
+        "services/voice-feedback.service.ts"
+      ],
+      "providers": [
+        "providers/web-speech.provider.ts",
+        "providers/provider-factory.ts"
+      ],
+      "components": [
+        "components/voice-indicator/index.tsx",
+        "components/voice-indicator/index.css.ts",
+        "components/voice-status-bar/index.tsx",
+        "components/voice-command-palette/index.tsx",
+        "components/voice-tutorial/index.tsx",
+        "components/voice-tutorial/index.css.ts"
+      ],
+      "tests": [
+        "tests/voice-control/*.spec.ts",
+        "__tests__/**/*.spec.ts"
+      ],
+      "integration": [
+        "integration.ts"
+      ]
+    },
+    "tools": {
+      "linter": "oxlint (configured in oxlint.json)",
+      "preCommitHook": ".husky/pre-commit (now fixed with npx)",
+      "validation": "npx oxlint -c oxlint.json --deny-warnings"
+    },
+    "successCriteria": {
+      "zeroLintErrors": "npx oxlint reports 0 errors",
+      "cleanCommit": "Git commit passes pre-commit hook without errors",
+      "noRegressions": "All existing functionality still works",
+      "codeQuality": "Improved code maintainability with modern patterns"
+    },
+    "impact": {
+      "immediate": "Unblocks team for clean git commits",
+      "shortTerm": "Improves code quality and maintainability",
+      "longTerm": "Sets standard for future code contributions"
+    },
+    "pairProgrammingAvailable": {
+      "jules": "Can help with test-related lint errors",
+      "codex": "Can advise on component-specific issues",
+      "claude": "Can assist with service-layer fixes"
+    }
+  },
+  "copilotStatus": {
+    "before": {
+      "status": "active",
+      "currentTask": "Shadowing Codex on UI components, completing onboarding"
+    },
+    "after": {
+      "status": "active-coding",
+      "currentTask": "T3.0.1 - Voice Control Module Lint Cleanup (167 errors)",
+      "priority": "HIGH",
+      "blockers": "None - can start immediately"
+    }
+  },
+  "teamCoordination": {
+    "claude": "Available for service-layer lint questions",
+    "codex": "T2.2.3 complete, available for UI component questions",
+    "jules": "Can pair on test-related fixes",
+    "warp": "Monitoring progress, ready to review"
+  },
+  "nextSteps": [
+    "Copilot: Review lint error report from git commit output (saved in session)",
+    "Copilot: Start with Phase 1 - UTF-8 BOM cleanup (quick win)",
+    "Copilot: Progress through phases 2-3 systematically",
+    "Copilot: Validate with oxlint and test commit",
+    "Copilot: Update central-memory with completion status",
+    "Team: Review cleaned code and merge"
+  ],
+  "messageToCopilot": "Hey Copilot! 🚀 Perfect timing for your first high-impact task! We discovered 167 lint errors when trying to commit Claude's voice control improvements. Your mission: Clean them up so the team can commit cleanly. This is a great learning opportunity - you'll touch every part of the voice control module. The task is well-defined with 4 phases. Most fixes are straightforward (remove BOM, delete unused imports, apply modern patterns). Jules tried earlier but hit the pre-commit hook issue (now fixed!). You're unblocked and ready to go. Start with UTF-8 BOM cleanup for quick wins, then tackle unused imports. Estimated 2-3 hours. This will unblock the entire team! Let's make it happen! 💪",
+  "messageToTeam": "📢 Task Assignment Update: Copilot is now assigned to T3.0.1 (Lint Error Cleanup). This high-priority task will clean up the 167 lint errors blocking our commits. Estimated completion: 2-3 hours. All team members available for pairing/questions. This unblocks everyone for cleaner development! 🎯",
+  "messageToMarlon": "Marlon! Perfect question about Copilot! 🎯 I've assigned him his first high-impact task: cleaning up the 167 lint errors from our voice control code. This is perfect for onboarding - he'll touch the entire codebase, learn our patterns, and immediately unblock the team. The task is well-scoped with 4 clear phases. He's starting with UTF-8 BOM cleanup (quick wins), then unused imports, then code style fixes. After this, the team can commit cleanly and our code quality improves. Great opportunity for Copilot to prove himself! ETA: 2-3 hours. Symphony Protocol in action! 🎵"
+}
