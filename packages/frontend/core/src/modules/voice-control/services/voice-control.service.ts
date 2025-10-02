@@ -1,6 +1,6 @@
 ﻿/**
  * Voice Control Service - Main coordinator for voice-controlled navigation
- * 
+ *
  * This service manages the entire voice control system including:
  * - Speech recognition and synthesis
  * - Command processing and execution
@@ -11,7 +11,7 @@
 import { Service } from '@toeverything/infra';
 
 import { createProviderFactory, createWebSpeechProvider } from '../providers';
-import type { 
+import type {
   VoiceCommand,
   VoiceCommandParameters,
   VoiceCommandResult,
@@ -22,12 +22,14 @@ import type {
   VoiceFeedback,
   VoiceNavigationContext,
   VoiceRecognitionResult,
-  VoiceSession} from '../types';
+  VoiceSession,
+} from '../types';
 import type {
   AudioProcessorInterface,
   SpeechRecognitionProviderInterface,
   SpeechSynthesisProviderInterface,
-  WakeWordProviderInterface} from '../types/providers';
+  WakeWordProviderInterface,
+} from '../types/providers';
 import { VoiceCommandRegistry } from './voice-command-registry.service';
 import { VoiceFeedbackService } from './voice-feedback.service';
 import { VoiceNavigationService } from './voice-navigation.service';
@@ -47,26 +49,27 @@ export class VoiceControlService extends Service {
   private config: VoiceControlConfig;
   private readonly state: VoiceControlState;
   private eventListeners: VoiceEventListenerMap = {};
-  
+
   // Core components
   private speechRecognition?: SpeechRecognitionProviderInterface;
   private speechSynthesis?: SpeechSynthesisProviderInterface;
   private readonly wakeWordDetector?: WakeWordProviderInterface;
   private readonly audioProcessor?: AudioProcessorInterface;
-  
-  // Services
-  private readonly commandRegistry: VoiceCommandRegistry;
-  private readonly navigationService: VoiceNavigationService;
-  private readonly feedbackService: VoiceFeedbackService;
-  
+
+  // Services (injected via DI framework)
+
   // Session management
   private currentSession?: VoiceSession;
   private sessionStartTime?: number;
   private unsubscribeNavigation?: () => void;
-  
-  constructor() {
+
+  constructor(
+    private readonly commandRegistry: VoiceCommandRegistry,
+    private readonly navigationService: VoiceNavigationService,
+    private readonly feedbackService: VoiceFeedbackService
+  ) {
     super();
-    
+
     // Initialize default configuration
     this.config = {
       recognition: {
@@ -76,30 +79,31 @@ export class VoiceControlService extends Service {
         maxAlternatives: 3,
         confidenceThreshold: 0.7,
         wakeWord: 'hey affine',
-        commandTimeout: 10000
+        commandTimeout: 10000,
       },
       feedback: {
         audioEnabled: true,
         visualEnabled: true,
         speechRate: 1.0,
         speechPitch: 1.0,
-        speechVolume: 0.8
+        speechVolume: 0.8,
       },
-      enabledCategories: ['navigation', 'document', 'ai', 'workspace', 'system'],
-      debug: false
+      enabledCategories: [
+        'navigation',
+        'document',
+        'ai',
+        'workspace',
+        'system',
+      ],
+      debug: false,
     };
-    
+
     // Initialize default state
     this.state = {
       isActive: false,
       isListening: false,
-      isProcessing: false
+      isProcessing: false,
     };
-    
-    // Initialize services
-    this.commandRegistry = new VoiceCommandRegistry();
-    this.navigationService = new VoiceNavigationService();
-    this.feedbackService = new VoiceFeedbackService();
   }
 
   // ============================================================================
@@ -117,32 +121,35 @@ export class VoiceControlService extends Service {
     try {
       // Initialize audio processor
       await this.initializeAudioProcessor();
-      
+
       // Initialize speech providers
       await this.initializeSpeechRecognition();
       await this.initializeSpeechSynthesis();
-      
+
       // Initialize wake word detection if configured
       if (this.config.recognition.wakeWord) {
         await this.initializeWakeWordDetection();
       }
-      
+
       // Initialize services
       await this.commandRegistry.initialize();
       await this.navigationService.initialize();
-      this.commandRegistry.setContext(this.navigationService.getCurrentContext());
+      this.commandRegistry.setContext(
+        this.navigationService.getCurrentContext()
+      );
       this.unsubscribeNavigation?.();
-      this.unsubscribeNavigation = this.navigationService.onContextChange((context) => {
-        this.commandRegistry.setContext(context);
-      });
+      this.unsubscribeNavigation = this.navigationService.onContextChange(
+        context => {
+          this.commandRegistry.setContext(context);
+        }
+      );
       await this.feedbackService.initialize(this.config.feedback);
-      
+
       // Register built-in commands
       await this.registerBuiltInCommands();
-      
+
       this.log('Voice control system initialized successfully');
       this.emit('voice:started');
-      
     } catch (error) {
       const errorMessage = `Failed to initialize voice control: ${error.message}`;
       this.log(errorMessage, 'error');
@@ -157,34 +164,44 @@ export class VoiceControlService extends Service {
    */
   async start(): Promise<void> {
     if (!this.speechRecognition) {
-      throw new Error('Voice control not initialized. Call initialize() first.');
+      throw new Error(
+        'Voice control not initialized. Call initialize() first.'
+      );
     }
 
-    if (this.state.isActive) {
-      this.log('Voice control is already active');
+    if (this.state.isActive && this.state.isListening) {
+      this.log('Voice control is already active and listening');
       return;
     }
 
     try {
-      // Start new session
-      await this.startSession();
-      
+      // Clear any previous errors
+      delete this.state.error;
+
+      // Start new session if not already active
+      if (!this.state.isActive) {
+        await this.startSession();
+        this.state.isActive = true;
+      }
+
       // Start wake word detection if configured
       if (this.wakeWordDetector && this.config.recognition.wakeWord) {
         await this.wakeWordDetector.start();
-        this.log(`Wake word detection started: "${this.config.recognition.wakeWord}"`);
+        this.log(
+          `Wake word detection started: "${this.config.recognition.wakeWord}"`
+        );
       } else {
         // Start continuous listening
         await this.startListening();
       }
-      
-      this.state.isActive = true;
-      this.log('Voice control started');
-      
+
+      this.log('Voice control started successfully');
     } catch (error) {
       const errorMessage = `Failed to start voice control: ${error.message}`;
       this.log(errorMessage, 'error');
       this.state.error = errorMessage;
+      this.state.isActive = false;
+      this.state.isListening = false;
       this.emit('voice:error', { error: errorMessage, context: error });
       throw error;
     }
@@ -201,19 +218,18 @@ export class VoiceControlService extends Service {
     try {
       // Stop listening
       await this.stopListening();
-      
+
       // Stop wake word detection
       if (this.wakeWordDetector) {
         await this.wakeWordDetector.stop();
       }
-      
+
       // End current session
       await this.endSession();
-      
+
       this.state.isActive = false;
       this.log('Voice control stopped');
       this.emit('voice:stopped');
-      
     } catch (error) {
       this.log(`Error stopping voice control: ${error.message}`, 'error');
     }
@@ -239,7 +255,7 @@ export class VoiceControlService extends Service {
 
   async triggerCommand(
     commandId: string,
-    options: TriggerCommandOptions = {},
+    options: TriggerCommandOptions = {}
   ): Promise<void> {
     const command = this.commandRegistry.getCommand(commandId);
 
@@ -250,10 +266,18 @@ export class VoiceControlService extends Service {
 
       if (!options.suppressErrorFeedback) {
         try {
-          await this.feedbackService.speak(message, 'error', { interrupt: false });
+          await this.feedbackService.speak(message, 'error', {
+            interrupt: false,
+          });
         } catch (feedbackError) {
-          const feedbackMessage = feedbackError instanceof Error ? feedbackError.message : String(feedbackError);
-          this.log(`Failed to provide error feedback: ${feedbackMessage}`, 'error');
+          const feedbackMessage =
+            feedbackError instanceof Error
+              ? feedbackError.message
+              : String(feedbackError);
+          this.log(
+            `Failed to provide error feedback: ${feedbackMessage}`,
+            'error'
+          );
         }
       }
 
@@ -274,18 +298,30 @@ export class VoiceControlService extends Service {
     try {
       await this.executeCommand(command, parameters);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.log(`Failed to run command "${command.trigger}": ${errorMessage}`, 'error');
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.log(
+        `Failed to run command "${command.trigger}": ${errorMessage}`,
+        'error'
+      );
 
       if (!options.suppressErrorFeedback) {
         try {
           const feedback = errorMessage
             ? `I couldn't run ${command.trigger}. ${errorMessage}`
             : `I couldn't run ${command.trigger}.`;
-          await this.feedbackService.speak(feedback.trim(), 'error', { interrupt: false });
+          await this.feedbackService.speak(feedback.trim(), 'error', {
+            interrupt: false,
+          });
         } catch (feedbackError) {
-          const feedbackMessage = feedbackError instanceof Error ? feedbackError.message : String(feedbackError);
-          this.log(`Failed to provide error feedback: ${feedbackMessage}`, 'error');
+          const feedbackMessage =
+            feedbackError instanceof Error
+              ? feedbackError.message
+              : String(feedbackError);
+          this.log(
+            `Failed to provide error feedback: ${feedbackMessage}`,
+            'error'
+          );
         }
       }
 
@@ -307,12 +343,12 @@ export class VoiceControlService extends Service {
    */
   async updateConfig(config: Partial<VoiceControlConfig>): Promise<void> {
     this.config = { ...this.config, ...config };
-    
+
     // Update feedback service if feedback config changed
     if (config.feedback) {
       await this.feedbackService.updateConfig(config.feedback);
     }
-    
+
     this.log('Configuration updated');
   }
 
@@ -340,7 +376,9 @@ export class VoiceControlService extends Service {
     event: K,
     handler: VoiceEventHandler<K>
   ): void {
-    const listeners = this.eventListeners[event] as Set<VoiceEventHandler<K>> | undefined;
+    const listeners = this.eventListeners[event] as
+      | Set<VoiceEventHandler<K>>
+      | undefined;
     if (listeners) {
       listeners.delete(handler);
       if (listeners.size === 0) {
@@ -356,7 +394,9 @@ export class VoiceControlService extends Service {
     event: K,
     data: VoiceControlEvents[K]
   ): void {
-    const listeners = this.eventListeners[event] as Set<VoiceEventHandler<K>> | undefined;
+    const listeners = this.eventListeners[event] as
+      | Set<VoiceEventHandler<K>>
+      | undefined;
     if (!listeners) {
       return;
     }
@@ -366,13 +406,20 @@ export class VoiceControlService extends Service {
         const result = listener(data);
         if (result instanceof Promise) {
           result.catch(error => {
-            const message = error instanceof Error ? error.message : String(error);
-            this.log(`Async event handler for ${String(event)} rejected: ${message}`, 'error');
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.log(
+              `Async event handler for ${String(event)} rejected: ${message}`,
+              'error'
+            );
           });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.log(`Error in event handler for ${String(event)}: ${message}`, 'error');
+        this.log(
+          `Error in event handler for ${String(event)}: ${message}`,
+          'error'
+        );
       }
     });
   }
@@ -382,70 +429,90 @@ export class VoiceControlService extends Service {
   // ============================================================================
 
   private async startListening(): Promise<void> {
-    if (!this.speechRecognition || this.state.isListening) {
+    if (!this.speechRecognition) {
+      throw new Error('Speech recognition not initialized');
+    }
+
+    // Check actual state from provider
+    const providerState = (
+      this.speechRecognition as any
+    ).getRecognitionState?.();
+    if (providerState?.isRecognizing) {
+      this.log('Recognition is already active (syncing state)');
+      this.state.isListening = true;
       return;
     }
 
     try {
       await this.speechRecognition.startRecognition();
-      this.state.isListening = true;
-      this.emit('voice:listening:start', undefined);
+      // Note: state.isListening will be set by the onStateChange callback
       this.log('Started listening for voice commands');
-      
     } catch (error) {
+      this.state.error = error.message;
       throw new Error(`Failed to start listening: ${error.message}`);
     }
   }
 
   private async stopListening(): Promise<void> {
-    if (!this.speechRecognition || !this.state.isListening) {
+    if (!this.speechRecognition) {
       return;
     }
 
     try {
       await this.speechRecognition.stopRecognition();
-      this.state.isListening = false;
-      this.emit('voice:listening:stop', undefined);
+      // Note: state.isListening will be set by the onStateChange callback
       this.log('Stopped listening for voice commands');
-      
     } catch (error) {
       this.log(`Error stopping listening: ${error.message}`, 'error');
+      // Force state update even if stop fails
+      this.state.isListening = false;
     }
   }
 
-  private async handleRecognitionResult(result: VoiceRecognitionResult): Promise<void> {
+  private async handleRecognitionResult(
+    result: VoiceRecognitionResult
+  ): Promise<void> {
     this.state.lastRecognizedText = result.transcript;
     this.emit('voice:recognition', result);
-    
+
     // Only process final results with sufficient confidence
-    if (!result.isFinal || result.confidence < this.config.recognition.confidenceThreshold) {
+    if (
+      !result.isFinal ||
+      result.confidence < this.config.recognition.confidenceThreshold
+    ) {
       return;
     }
 
-    this.log(`Processing voice command: "${result.transcript}" (confidence: ${result.confidence})`);
-    
+    this.log(
+      `Processing voice command: "${result.transcript}" (confidence: ${result.confidence})`
+    );
+
     try {
       this.state.isProcessing = true;
-      
+
       // Find matching commands
-      const matches = this.commandRegistry.findMatchingCommands(result.transcript);
-      
+      const matches = this.commandRegistry.findMatchingCommands(
+        result.transcript
+      );
+
       if (matches.length === 0) {
         await this.handleUnrecognizedCommand(result.transcript);
         return;
       }
-      
+
       // Execute the best matching command
       const bestMatch = matches[0];
       await this.executeCommand(bestMatch.command, {
         originalInput: result.transcript,
         parameters: bestMatch.parameters,
-        confidence: result.confidence
+        confidence: result.confidence,
       });
-      
     } catch (error) {
       this.log(`Error processing voice command: ${error.message}`, 'error');
-      await this.feedbackService.speak(`Sorry, I couldn't process that command. ${error.message}`, 'error');
+      await this.feedbackService.speak(
+        `Sorry, I couldn't process that command. ${error.message}`,
+        'error'
+      );
     } finally {
       this.state.isProcessing = false;
     }
@@ -453,10 +520,10 @@ export class VoiceControlService extends Service {
 
   private async handleUnrecognizedCommand(text: string): Promise<void> {
     this.log(`Unrecognized voice command: "${text}"`);
-    
+
     // Try to get help from AI if available
     const suggestions = await this.getSuggestionsFromAI(text);
-    
+
     if (suggestions.length > 0) {
       await this.feedbackService.speak(
         `I didn't recognize that command. Did you mean: ${suggestions.join(', ')}?`,
@@ -479,20 +546,22 @@ export class VoiceControlService extends Service {
     parameters: VoiceCommandParameters
   ): Promise<void> {
     const context = this.navigationService.getCurrentContext();
-    
+
     this.emit('voice:command:matched', { command, parameters });
-    
+
     try {
       // Check if command can be executed in current context
       if (!this.canExecuteInContext(command, context)) {
-        throw new Error(`Command "${command.trigger}" is not available in the current context`);
+        throw new Error(
+          `Command "${command.trigger}" is not available in the current context`
+        );
       }
-      
+
       // Execute the command
       const startTime = Date.now();
       const result = await command.handler(parameters, context);
       const duration = Date.now() - startTime;
-      
+
       // Record execution in session
       if (this.currentSession) {
         this.currentSession.commands.push({
@@ -500,29 +569,28 @@ export class VoiceControlService extends Service {
           parameters,
           result,
           timestamp: startTime,
-          duration
+          duration,
         });
-        
+
         // Update session stats
         this.updateSessionStats(result.success);
       }
-      
+
       // Provide feedback
       if (result.message) {
         const feedbackType = result.success ? 'success' : 'error';
         await this.feedbackService.speak(result.message, feedbackType);
       }
-      
+
       // Execute follow-up actions
       if (result.actions) {
         for (const action of result.actions) {
           await this.executeAction(action);
         }
       }
-      
+
       this.emit('voice:command:executed', { command, result });
       this.log(`Command executed: "${command.trigger}" (${duration}ms)`);
-      
     } catch (error) {
       this.emit('voice:command:failed', { command, error: error.message });
       this.log(`Command execution failed: ${error.message}`, 'error');
@@ -530,21 +598,27 @@ export class VoiceControlService extends Service {
     }
   }
 
-  private canExecuteInContext(command: VoiceCommand, context: VoiceNavigationContext): boolean {
+  private canExecuteInContext(
+    command: VoiceCommand,
+    context: VoiceNavigationContext
+  ): boolean {
     if (!command.context) {
       return true; // No context requirements
     }
-    
+
     // Check required view
-    if (command.context.requiredView && context.currentView !== command.context.requiredView) {
+    if (
+      command.context.requiredView &&
+      context.currentView !== command.context.requiredView
+    ) {
       return false;
     }
-    
+
     // Check excluded contexts
     if (command.context.excludedContexts?.includes(context.currentView)) {
       return false;
     }
-    
+
     // Add more context validation as needed
     return true;
   }
@@ -555,7 +629,7 @@ export class VoiceControlService extends Service {
 
   private async startSession(): Promise<void> {
     const context = this.navigationService.getCurrentContext();
-    
+
     this.currentSession = {
       id: this.generateSessionId(),
       startTime: Date.now(),
@@ -566,13 +640,13 @@ export class VoiceControlService extends Service {
         successfulCommands: 0,
         failedCommands: 0,
         averageConfidence: 0,
-        totalDuration: 0
-      }
+        totalDuration: 0,
+      },
     };
-    
+
     this.sessionStartTime = Date.now();
     this.state.currentSession = this.currentSession;
-    
+
     this.log(`Started new voice session: ${this.currentSession.id}`);
   }
 
@@ -580,38 +654,40 @@ export class VoiceControlService extends Service {
     if (!this.currentSession) {
       return;
     }
-    
+
     this.currentSession.endTime = Date.now();
-    this.currentSession.stats.totalDuration = this.currentSession.endTime - this.currentSession.startTime;
-    
+    this.currentSession.stats.totalDuration =
+      this.currentSession.endTime - this.currentSession.startTime;
+
     this.log(
       `Ended voice session: ${this.currentSession.id} ` +
-      `(${this.currentSession.commands.length} commands, ` +
-      `${this.currentSession.stats.totalDuration}ms)`
+        `(${this.currentSession.commands.length} commands, ` +
+        `${this.currentSession.stats.totalDuration}ms)`
     );
-    
+
     // Store session for analytics (implement as needed)
     // await this.storeSession(this.currentSession);
-    
+
     this.currentSession = undefined;
     this.state.currentSession = undefined;
   }
 
   private updateSessionStats(success: boolean): void {
     if (!this.currentSession) return;
-    
+
     const stats = this.currentSession.stats;
     stats.totalCommands++;
-    
+
     if (success) {
       stats.successfulCommands++;
     } else {
       stats.failedCommands++;
     }
-    
+
     // Update average confidence (simplified)
     const totalConfidence = this.currentSession.commands.reduce(
-      (sum, cmd) => sum + cmd.parameters.confidence, 0
+      (sum, cmd) => sum + cmd.parameters.confidence,
+      0
     );
     stats.averageConfidence = totalConfidence / stats.totalCommands;
   }
@@ -624,7 +700,10 @@ export class VoiceControlService extends Service {
     return `voice-session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  private log(
+    message: string,
+    level: 'info' | 'warn' | 'error' = 'info'
+  ): void {
     if (this.config.debug) {
       console[level](`[VoiceControl] ${message}`);
     }
@@ -648,7 +727,9 @@ export class VoiceControlService extends Service {
   private async initializeAudioProcessor(): Promise<void> {
     // Audio processor initialization - not needed for Web Speech API
     // Future implementation for advanced audio processing (noise reduction, etc.)
-    this.log('Audio processor initialization skipped (using Web Speech API native processing)');
+    this.log(
+      'Audio processor initialization skipped (using Web Speech API native processing)'
+    );
   }
 
   private async initializeSpeechRecognition(): Promise<void> {
@@ -665,41 +746,68 @@ export class VoiceControlService extends Service {
           language: this.config.recognition.language,
           continuous: this.config.recognition.continuous,
           interimResults: this.config.recognition.interimResults,
-          maxAlternatives: this.config.recognition.maxAlternatives
-        }
+          maxAlternatives: this.config.recognition.maxAlternatives,
+        },
       };
 
       await webSpeechProvider.recognition.initialize(recognitionConfig);
 
       // Set up recognition event handlers
-      webSpeechProvider.recognition.onResult((result) => {
+      webSpeechProvider.recognition.onResult(result => {
         const voiceResult = {
           transcript: result.text,
           confidence: result.confidence,
           isFinal: result.isFinal,
-          alternatives: result.alternatives?.map(alt => ({
-            transcript: alt.text,
-            confidence: alt.confidence
-          })) || [],
+          alternatives:
+            result.alternatives?.map(alt => ({
+              transcript: alt.text,
+              confidence: alt.confidence,
+            })) || [],
           timestamp: result.timestamp,
-          metadata: result.metadata
+          metadata: result.metadata,
         };
         void this.handleRecognitionResult(voiceResult).catch(error => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.log(`Error handling recognition result: ${message}`,'error');
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.log(`Error handling recognition result: ${message}`, 'error');
         });
       });
 
-      webSpeechProvider.recognition.onError((error) => {
+      webSpeechProvider.recognition.onError(error => {
         this.log(`Speech recognition error: ${error.message}`, 'error');
+        this.state.error = error.message;
         this.emit('voice:error', { error: error.message, context: error });
+
+        // Handle fatal errors that require reinitialization
+        if (
+          error.code === 'MAX_RESTART_ATTEMPTS' ||
+          error.code === 'PERMISSION_DENIED'
+        ) {
+          this.state.isListening = false;
+          this.state.isActive = false;
+        }
+      });
+
+      // Sync state when recognition state changes
+      webSpeechProvider.recognition.onStateChange(isRecognizing => {
+        this.log(
+          `Recognition state changed: ${isRecognizing ? 'listening' : 'stopped'}`
+        );
+        this.state.isListening = isRecognizing;
+
+        if (isRecognizing) {
+          this.emit('voice:listening:start', undefined);
+        } else {
+          this.emit('voice:listening:stop', undefined);
+        }
       });
 
       this.speechRecognition = webSpeechProvider.recognition;
       this.log('Speech recognition provider initialized successfully');
-
     } catch (error) {
-      throw new Error(`Failed to initialize speech recognition: ${error.message}`);
+      throw new Error(
+        `Failed to initialize speech recognition: ${error.message}`
+      );
     }
   }
 
@@ -712,21 +820,22 @@ export class VoiceControlService extends Service {
         provider: 'web-speech-api' as const,
         voice: {
           language: this.config.recognition.language, // Use same language as recognition
-          gender: 'neutral' as const
+          gender: 'neutral' as const,
         },
         audio: {
           rate: this.config.feedback.speechRate,
           pitch: this.config.feedback.speechPitch,
-          volume: this.config.feedback.speechVolume
-        }
+          volume: this.config.feedback.speechVolume,
+        },
       };
 
       await webSpeechProvider.synthesis.initialize(synthesisConfig);
       this.speechSynthesis = webSpeechProvider.synthesis;
       this.log('Speech synthesis provider initialized successfully');
-
     } catch (error) {
-      throw new Error(`Failed to initialize speech synthesis: ${error.message}`);
+      throw new Error(
+        `Failed to initialize speech synthesis: ${error.message}`
+      );
     }
   }
 
@@ -737,7 +846,9 @@ export class VoiceControlService extends Service {
 
     // For now, we'll use continuous listening mode instead
     if (this.config.recognition.wakeWord) {
-      this.log(`Wake word configured: "${this.config.recognition.wakeWord}" (continuous mode will be used)`);
+      this.log(
+        `Wake word configured: "${this.config.recognition.wakeWord}" (continuous mode will be used)`
+      );
     }
   }
 
@@ -761,16 +872,18 @@ export class VoiceControlService extends Service {
           return {
             success: true,
             message: `Available commands: ${helpText}`,
-            actions: [{
-              type: 'show_help_panel',
-              commands: commands.map(cmd => ({
-                trigger: cmd.trigger,
-                description: cmd.description,
-                category: cmd.category
-              }))
-            }]
+            actions: [
+              {
+                type: 'show_help_panel',
+                commands: commands.map(cmd => ({
+                  trigger: cmd.trigger,
+                  description: cmd.description,
+                  category: cmd.category,
+                })),
+              },
+            ],
           };
-        }
+        },
       });
 
       // Voice control commands
@@ -785,8 +898,11 @@ export class VoiceControlService extends Service {
             await this.startListening();
             return { success: true, message: 'Voice recognition started' };
           }
-          return { success: false, message: 'Voice recognition is already active' };
-        }
+          return {
+            success: false,
+            message: 'Voice recognition is already active',
+          };
+        },
       });
 
       this.commandRegistry.register({
@@ -801,7 +917,7 @@ export class VoiceControlService extends Service {
             return { success: true, message: 'Voice recognition stopped' };
           }
           return { success: false, message: 'Voice recognition is not active' };
-        }
+        },
       });
 
       // Basic navigation commands
@@ -817,7 +933,7 @@ export class VoiceControlService extends Service {
             return { success: true, message: 'Navigated back' };
           }
           return { success: false, message: 'Cannot navigate back' };
-        }
+        },
       });
 
       this.commandRegistry.register({
@@ -832,7 +948,7 @@ export class VoiceControlService extends Service {
             return { success: true, message: 'Navigated forward' };
           }
           return { success: false, message: 'Cannot navigate forward' };
-        }
+        },
       });
 
       this.commandRegistry.register({
@@ -847,7 +963,7 @@ export class VoiceControlService extends Service {
             return { success: true, message: 'Page reloaded' };
           }
           return { success: false, message: 'Cannot reload page' };
-        }
+        },
       });
 
       // Status commands
@@ -863,15 +979,19 @@ export class VoiceControlService extends Service {
           return {
             success: true,
             message: statusText,
-            data: state
+            data: state,
           };
-        }
+        },
       });
 
-      this.log(`Registered ${this.commandRegistry.getAllCommands().length} built-in commands`);
-
+      this.log(
+        `Registered ${this.commandRegistry.getAllCommands().length} built-in commands`
+      );
     } catch (error) {
-      this.log(`Error registering built-in commands: ${error.message}`, 'error');
+      this.log(
+        `Error registering built-in commands: ${error.message}`,
+        'error'
+      );
       throw error;
     }
   }
@@ -886,7 +1006,10 @@ export class VoiceControlService extends Service {
         await this.stop();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.log(`Error stopping voice control during dispose: ${message}`, 'error');
+        this.log(
+          `Error stopping voice control during dispose: ${message}`,
+          'error'
+        );
       }
 
       this.unsubscribeNavigation?.();
@@ -912,13 +1035,16 @@ export class VoiceControlService extends Service {
           try {
             await task;
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+              error instanceof Error ? error.message : String(error);
             this.log(`Error cleaning up provider: ${message}`, 'error');
           }
         }
       }
 
-      for (const eventKey of Object.keys(this.eventListeners) as Array<keyof VoiceControlEvents>) {
+      for (const eventKey of Object.keys(this.eventListeners) as Array<
+        keyof VoiceControlEvents
+      >) {
         this.eventListeners[eventKey]?.clear();
         delete this.eventListeners[eventKey];
       }
@@ -930,11 +1056,3 @@ export class VoiceControlService extends Service {
     });
   }
 }
-
-
-
-
-
-
-
-

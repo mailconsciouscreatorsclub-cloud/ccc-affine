@@ -1,1 +1,1 @@
-yarn lint-staged && yarn lint:ox
+npx --yes lint-staged && npx oxlint -c oxlint.json --deny-warnings

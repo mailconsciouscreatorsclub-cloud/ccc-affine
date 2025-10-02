@@ -1,20 +1,20 @@
 /**
  * Voice Control Module - Main Entry Point
- * 
+ *
  * This module provides voice-controlled navigation for AFFiNE,
  * enabling users to interact with the application using natural speech.
- * 
+ *
  * @example
  * ```typescript
  * import { VoiceControlService, VoiceCommand } from './voice-control';
- * 
+ *
  * // Initialize voice control
  * const voiceControl = new VoiceControlService();
  * await voiceControl.initialize();
- * 
+ *
  * // Start listening for voice commands
  * await voiceControl.start();
- * 
+ *
  * // Register custom command
  * voiceControl.commandRegistry.register({
  *   id: 'custom-command',
@@ -42,7 +42,8 @@ export {
   VoiceProviderFactory,
   WebSpeechProvider,
   WebSpeechRecognitionProvider,
-  WebSpeechSynthesisProvider} from './providers';
+  WebSpeechSynthesisProvider,
+} from './providers';
 
 // ============================================================================
 // UI Components
@@ -158,13 +159,21 @@ export const VOICE_CONTROL_MODULE = {
     'Custom command registration',
   ],
   supportedLanguages: [
-    'en-US', 'en-GB', 'en-AU', 'en-CA',
-    'es-ES', 'es-MX', 'es-US',
-    'fr-FR', 'fr-CA',
+    'en-US',
+    'en-GB',
+    'en-AU',
+    'en-CA',
+    'es-ES',
+    'es-MX',
+    'es-US',
+    'fr-FR',
+    'fr-CA',
     'de-DE',
     'it-IT',
-    'pt-BR', 'pt-PT',
-    'zh-CN', 'zh-TW',
+    'pt-BR',
+    'pt-PT',
+    'zh-CN',
+    'zh-TW',
     'ja-JP',
     'ko-KR',
   ],
@@ -195,7 +204,13 @@ export const DEFAULT_VOICE_CONFIG = {
     speechPitch: 1.0,
     speechVolume: 0.8,
   },
-  enabledCategories: ['navigation', 'document', 'ai', 'workspace', 'system'] as const,
+  enabledCategories: [
+    'navigation',
+    'document',
+    'ai',
+    'workspace',
+    'system',
+  ] as const,
   debug: false,
 } as const;
 
@@ -238,12 +253,15 @@ export function isVoiceControlSupported(): boolean {
   if (typeof window === 'undefined') {
     return false;
   }
-  
+
   // Check for basic Web Speech API support
-  const hasWebSpeechAPI = 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
-  const hasAudioContext = 'AudioContext' in window || 'webkitAudioContext' in window;
-  const hasMediaDevices = 'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices;
-  
+  const hasWebSpeechAPI =
+    'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
+  const hasAudioContext =
+    'AudioContext' in window || 'webkitAudioContext' in window;
+  const hasMediaDevices =
+    'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices;
+
   return hasWebSpeechAPI && hasAudioContext && hasMediaDevices;
 }
 
@@ -266,11 +284,13 @@ export function getVoiceCapabilities(): {
       wakeWordDetection: false,
     };
   }
-  
+
   return {
-    speechRecognition: 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
+    speechRecognition:
+      'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
     speechSynthesis: 'speechSynthesis' in window,
-    mediaDevices: 'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices,
+    mediaDevices:
+      'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices,
     audioContext: 'AudioContext' in window || 'webkitAudioContext' in window,
     wakeWordDetection: false, // Requires additional libraries
   };
@@ -279,9 +299,11 @@ export function getVoiceCapabilities(): {
 /**
  * Create a voice control configuration with environment variable overrides
  */
-export function createVoiceConfig(overrides?: Partial<typeof DEFAULT_VOICE_CONFIG>): any {
+export function createVoiceConfig(
+  overrides?: Partial<typeof DEFAULT_VOICE_CONFIG>
+): any {
   const envOverrides: Partial<typeof DEFAULT_VOICE_CONFIG> = {};
-  
+
   // Override with environment variables if available
   if (typeof process !== 'undefined' && process.env) {
     if (process.env[VOICE_FEATURE_FLAGS.WAKE_WORD]) {
@@ -290,12 +312,12 @@ export function createVoiceConfig(overrides?: Partial<typeof DEFAULT_VOICE_CONFI
         wakeWord: process.env[VOICE_FEATURE_FLAGS.WAKE_WORD],
       };
     }
-    
+
     if (process.env[VOICE_FEATURE_FLAGS.DEBUG] === 'true') {
       (envOverrides as any).debug = true;
     }
   }
-  
+
   return {
     ...DEFAULT_VOICE_CONFIG,
     ...envOverrides,
@@ -379,10 +401,9 @@ export function configureVoiceControlModule(framework: Framework) {
     // Register navigation service
     .service(VoiceNavigationServiceClass)
 
-    // Register main voice control service (depends on all above)
+    // Register main voice control service (depends on command registry, navigation, and feedback)
     .service(VoiceControlServiceClass, [
       VoiceCommandRegistryClass,
-      VoiceProviderFactoryClass,
       VoiceNavigationServiceClass,
       VoiceFeedbackServiceClass,
     ]);

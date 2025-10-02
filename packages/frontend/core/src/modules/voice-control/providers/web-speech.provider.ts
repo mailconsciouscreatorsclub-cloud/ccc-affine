@@ -15,20 +15,28 @@ import type {
   SpeechSynthesisProviderInterface,
   SynthesisOptions,
   SynthesisResult,
-  VoiceInfo
+  VoiceInfo,
 } from '../types/providers';
 
 // ============================================================================
 // Web Speech Recognition Provider
 // ============================================================================
 
-export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderInterface {
+export class WebSpeechRecognitionProvider
+  implements SpeechRecognitionProviderInterface
+{
   private recognition?: SpeechRecognition;
   private config?: SpeechRecognitionProviderConfig;
   private isInitialized = false;
   private isRecognizing = false;
+  private shouldBeRecognizing = false; // Track intended state vs actual state
+  private autoRestartEnabled = true;
+  private restartAttempts = 0;
+  private readonly maxRestartAttempts = 3;
+  private readonly restartDelay = 1000; // ms
   private resultCallback?: (result: SpeechRecognitionResult) => void;
   private errorCallback?: (error: SpeechRecognitionError) => void;
+  private stateChangeCallback?: (isRecognizing: boolean) => void;
 
   async initialize(config: SpeechRecognitionProviderConfig): Promise<void> {
     if (!this.isAvailable()) {
@@ -38,7 +46,8 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
     this.config = config;
 
     // Create SpeechRecognition instance (handle vendor prefixes)
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
     this.recognition = new SpeechRecognition();
 
     // Configure recognition settings
@@ -58,11 +67,26 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
 
     this.recognition.onstart = () => {
       console.debug('[WebSpeechProvider] Recognition started');
+      this.isRecognizing = true;
+      this.restartAttempts = 0; // Reset restart counter on successful start
+      this.notifyStateChange();
     };
 
     this.recognition.onend = () => {
       console.debug('[WebSpeechProvider] Recognition ended');
+      const wasRecognizing = this.isRecognizing;
       this.isRecognizing = false;
+      this.notifyStateChange();
+
+      // Auto-restart if we should still be recognizing (continuous mode)
+      if (
+        this.shouldBeRecognizing &&
+        this.autoRestartEnabled &&
+        wasRecognizing
+      ) {
+        console.debug('[WebSpeechProvider] Auto-restarting recognition...');
+        this.attemptRestart();
+      }
     };
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
@@ -81,13 +105,13 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
             .slice(1, 3) // Get up to 2 additional alternatives
             .map(alt => ({
               text: alt.transcript,
-              confidence: alt.confidence || 0.5
+              confidence: alt.confidence || 0.5,
             })),
           timestamp: Date.now(),
           metadata: {
             resultIndex: i,
-            provider: 'web-speech-api'
-          }
+            provider: 'web-speech-api',
+          },
         };
 
         this.resultCallback(speechResult);
@@ -95,18 +119,43 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
     };
 
     this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (!this.errorCallback) return;
+      console.error('[WebSpeechProvider] Recognition error:', event.error);
 
       const error: SpeechRecognitionError = {
         code: this.mapErrorCode(event.error),
         message: this.getErrorMessage(event.error),
         details: {
           originalError: event.error,
-          provider: 'web-speech-api'
-        }
+          provider: 'web-speech-api',
+        },
       };
 
-      this.errorCallback(error);
+      // Handle recoverable errors differently
+      const recoverableErrors = ['no-speech', 'audio-capture', 'network'];
+      const isRecoverable = recoverableErrors.includes(event.error);
+
+      if (
+        isRecoverable &&
+        this.shouldBeRecognizing &&
+        this.autoRestartEnabled
+      ) {
+        console.debug(
+          `[WebSpeechProvider] Recoverable error: ${event.error}, will attempt restart`
+        );
+        // Don't notify error callback for recoverable errors that will auto-restart
+      } else {
+        // Notify error callback for non-recoverable or manual errors
+        if (this.errorCallback) {
+          this.errorCallback(error);
+        }
+
+        // Stop recognition for non-recoverable errors
+        if (!isRecoverable && event.error !== 'aborted') {
+          this.shouldBeRecognizing = false;
+          this.isRecognizing = false;
+          this.notifyStateChange();
+        }
+      }
     };
 
     this.recognition.onnomatch = () => {
@@ -114,7 +163,7 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
         this.errorCallback({
           code: 'NO_MATCH',
           message: 'No speech was recognized',
-          details: { provider: 'web-speech-api' }
+          details: { provider: 'web-speech-api' },
         });
       }
     };
@@ -131,51 +180,110 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
     }
 
     try {
+      this.shouldBeRecognizing = true;
+      this.restartAttempts = 0;
       this.recognition.start();
-      this.isRecognizing = true;
+      // Note: isRecognizing will be set to true in the onstart handler
     } catch (error) {
-      throw new Error(`Failed to start recognition: ${error.message}`);
+      // Handle "already started" error gracefully
+      if (error.name === 'InvalidStateError') {
+        console.warn(
+          '[WebSpeechProvider] Recognition already started, stopping and restarting...'
+        );
+        try {
+          this.recognition.stop();
+          // Wait a bit and retry
+          await new Promise(resolve => setTimeout(resolve, 100));
+          this.recognition.start();
+        } catch (retryError) {
+          this.shouldBeRecognizing = false;
+          throw new Error(
+            `Failed to restart recognition: ${retryError.message}`
+          );
+        }
+      } else {
+        this.shouldBeRecognizing = false;
+        throw new Error(`Failed to start recognition: ${error.message}`);
+      }
     }
   }
 
   async stopRecognition(): Promise<void> {
-    if (!this.recognition || !this.isRecognizing) {
+    this.shouldBeRecognizing = false; // Prevent auto-restart
+    this.autoRestartEnabled = false; // Disable auto-restart during manual stop
+
+    if (!this.recognition) {
       return;
     }
 
     try {
-      this.recognition.stop();
+      if (this.isRecognizing) {
+        this.recognition.stop();
+      }
       this.isRecognizing = false;
+      this.notifyStateChange();
     } catch (error) {
       console.error('[WebSpeechProvider] Error stopping recognition:', error);
+      // Force state reset even if stop fails
+      this.isRecognizing = false;
+      this.notifyStateChange();
+    } finally {
+      // Re-enable auto-restart after a delay (for next start)
+      setTimeout(() => {
+        this.autoRestartEnabled = true;
+      }, 500);
     }
   }
 
   isAvailable(): boolean {
-    return typeof window !== 'undefined' &&
-           ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+    return (
+      typeof window !== 'undefined' &&
+      ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
+    );
   }
 
   getSupportedLanguages(): string[] {
     // Web Speech API supports a wide range of languages
     return [
-      'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN', 'en-NZ', 'en-ZA',
-      'es-ES', 'es-MX', 'es-US', 'es-AR', 'es-CO', 'es-CL',
-      'fr-FR', 'fr-CA', 'fr-BE', 'fr-CH',
-      'de-DE', 'de-AT', 'de-CH',
-      'it-IT', 'it-CH',
-      'pt-BR', 'pt-PT',
-      'zh-CN', 'zh-TW', 'zh-HK',
+      'en-US',
+      'en-GB',
+      'en-AU',
+      'en-CA',
+      'en-IN',
+      'en-NZ',
+      'en-ZA',
+      'es-ES',
+      'es-MX',
+      'es-US',
+      'es-AR',
+      'es-CO',
+      'es-CL',
+      'fr-FR',
+      'fr-CA',
+      'fr-BE',
+      'fr-CH',
+      'de-DE',
+      'de-AT',
+      'de-CH',
+      'it-IT',
+      'it-CH',
+      'pt-BR',
+      'pt-PT',
+      'zh-CN',
+      'zh-TW',
+      'zh-HK',
       'ja-JP',
       'ko-KR',
       'ru-RU',
-      'ar-SA', 'ar-EG',
+      'ar-SA',
+      'ar-EG',
       'hi-IN',
       'th-TH',
       'vi-VN',
       'tr-TR',
       'pl-PL',
-      'nl-NL', 'nl-BE',
+      'nl-NL',
+      'nl-BE',
       'sv-SE',
       'da-DK',
       'no-NO',
@@ -185,7 +293,7 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
       'el-GR',
       'he-IL',
       'id-ID',
-      'ms-MY'
+      'ms-MY',
     ];
   }
 
@@ -203,24 +311,85 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
     this.errorCallback = callback;
   }
 
+  onStateChange(callback: (isRecognizing: boolean) => void): void {
+    this.stateChangeCallback = callback;
+  }
+
+  getRecognitionState(): {
+    isRecognizing: boolean;
+    shouldBeRecognizing: boolean;
+  } {
+    return {
+      isRecognizing: this.isRecognizing,
+      shouldBeRecognizing: this.shouldBeRecognizing,
+    };
+  }
+
   async cleanup(): Promise<void> {
+    this.shouldBeRecognizing = false;
+    this.autoRestartEnabled = false;
     await this.stopRecognition();
     this.recognition = undefined;
     this.resultCallback = undefined;
     this.errorCallback = undefined;
+    this.stateChangeCallback = undefined;
     this.isInitialized = false;
+  }
+
+  private notifyStateChange(): void {
+    if (this.stateChangeCallback) {
+      this.stateChangeCallback(this.isRecognizing);
+    }
+  }
+
+  private attemptRestart(): void {
+    if (this.restartAttempts >= this.maxRestartAttempts) {
+      console.error(
+        '[WebSpeechProvider] Max restart attempts reached, giving up'
+      );
+      this.shouldBeRecognizing = false;
+      if (this.errorCallback) {
+        this.errorCallback({
+          code: 'MAX_RESTART_ATTEMPTS',
+          message:
+            'Failed to maintain continuous recognition after multiple attempts',
+          details: {
+            provider: 'web-speech-api',
+            attempts: this.restartAttempts,
+          },
+        });
+      }
+      return;
+    }
+
+    this.restartAttempts++;
+    console.debug(
+      `[WebSpeechProvider] Restart attempt ${this.restartAttempts}/${this.maxRestartAttempts}`
+    );
+
+    setTimeout(() => {
+      if (this.shouldBeRecognizing && !this.isRecognizing) {
+        this.startRecognition().catch(error => {
+          console.error('[WebSpeechProvider] Restart failed:', error);
+          // Try again unless we've exceeded max attempts
+          if (this.restartAttempts < this.maxRestartAttempts) {
+            this.attemptRestart();
+          }
+        });
+      }
+    }, this.restartDelay * this.restartAttempts); // Exponential backoff
   }
 
   private mapErrorCode(browserError: string): string {
     const errorMap: Record<string, string> = {
       'no-speech': 'NO_SPEECH',
-      'aborted': 'ABORTED',
+      aborted: 'ABORTED',
       'audio-capture': 'AUDIO_CAPTURE_FAILED',
-      'network': 'NETWORK_ERROR',
+      network: 'NETWORK_ERROR',
       'not-allowed': 'PERMISSION_DENIED',
       'service-not-allowed': 'SERVICE_NOT_ALLOWED',
       'bad-grammar': 'BAD_GRAMMAR',
-      'language-not-supported': 'LANGUAGE_NOT_SUPPORTED'
+      'language-not-supported': 'LANGUAGE_NOT_SUPPORTED',
     };
 
     return errorMap[browserError] || 'UNKNOWN_ERROR';
@@ -229,16 +398,19 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
   private getErrorMessage(browserError: string): string {
     const messageMap: Record<string, string> = {
       'no-speech': 'No speech was detected',
-      'aborted': 'Speech recognition was aborted',
+      aborted: 'Speech recognition was aborted',
       'audio-capture': 'Failed to capture audio from microphone',
-      'network': 'Network error occurred during recognition',
+      network: 'Network error occurred during recognition',
       'not-allowed': 'Microphone permission denied',
       'service-not-allowed': 'Speech recognition service not allowed',
       'bad-grammar': 'Invalid grammar specified',
-      'language-not-supported': 'Language not supported by this browser'
+      'language-not-supported': 'Language not supported by this browser',
     };
 
-    return messageMap[browserError] || `Unknown speech recognition error: ${browserError}`;
+    return (
+      messageMap[browserError] ||
+      `Unknown speech recognition error: ${browserError}`
+    );
   }
 }
 
@@ -246,7 +418,9 @@ export class WebSpeechRecognitionProvider implements SpeechRecognitionProviderIn
 // Web Speech Synthesis Provider
 // ============================================================================
 
-export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterface {
+export class WebSpeechSynthesisProvider
+  implements SpeechSynthesisProviderInterface
+{
   private config?: SpeechSynthesisProviderConfig;
   private isInitialized = false;
   private availableVoices: SpeechSynthesisVoice[] = [];
@@ -254,7 +428,9 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
 
   async initialize(config: SpeechSynthesisProviderConfig): Promise<void> {
     if (!this.isAvailable()) {
-      throw new Error('Web Speech Synthesis API is not available in this browser');
+      throw new Error(
+        'Web Speech Synthesis API is not available in this browser'
+      );
     }
 
     this.config = config;
@@ -269,7 +445,7 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
   }
 
   private async loadVoices(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       // Voices might already be available
       this.availableVoices = speechSynthesis.getVoices();
 
@@ -282,7 +458,10 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
       const handleVoicesChanged = () => {
         this.availableVoices = speechSynthesis.getVoices();
         if (this.availableVoices.length > 0) {
-          speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
+          speechSynthesis.removeEventListener(
+            'voiceschanged',
+            handleVoicesChanged
+          );
           resolve();
         }
       };
@@ -291,13 +470,18 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
 
       // Fallback timeout
       setTimeout(() => {
-        speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
+        speechSynthesis.removeEventListener(
+          'voiceschanged',
+          handleVoicesChanged
+        );
         resolve();
       }, 3000);
     });
   }
 
-  private selectVoice(voiceConfig?: SpeechSynthesisProviderConfig['voice']): void {
+  private selectVoice(
+    voiceConfig?: SpeechSynthesisProviderConfig['voice']
+  ): void {
     if (!voiceConfig) {
       // Use default voice (first available)
       this.selectedVoice = this.availableVoices[0];
@@ -307,14 +491,18 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
     // Find voice by name, language, or gender preference
     const matchingVoice = this.availableVoices.find(voice => {
       if (voiceConfig.name && voice.name === voiceConfig.name) return true;
-      if (voiceConfig.language && voice.lang.startsWith(voiceConfig.language)) return true;
+      if (voiceConfig.language && voice.lang.startsWith(voiceConfig.language))
+        return true;
       return false;
     });
 
     this.selectedVoice = matchingVoice || this.availableVoices[0];
   }
 
-  async speak(text: string, options?: SynthesisOptions): Promise<SynthesisResult> {
+  async speak(
+    text: string,
+    options?: SynthesisOptions
+  ): Promise<SynthesisResult> {
     if (!this.isInitialized) {
       throw new Error('Provider not initialized');
     }
@@ -346,13 +534,16 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
           metadata: {
             voice: this.selectedVoice?.name,
             language: this.selectedVoice?.lang,
-            provider: 'web-speech-api'
-          }
+            provider: 'web-speech-api',
+          },
         });
       };
 
-      utterance.onerror = (event) => {
-        console.error('[WebSpeechProvider] Speech synthesis error:', event.error);
+      utterance.onerror = event => {
+        console.error(
+          '[WebSpeechProvider] Speech synthesis error:',
+          event.error
+        );
         reject(new Error(`Speech synthesis failed: ${event.error}`));
       };
 
@@ -388,8 +579,8 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
       styles: [], // Web Speech API doesn't support styles
       metadata: {
         voiceURI: voice.voiceURI,
-        provider: 'web-speech-api'
-      }
+        provider: 'web-speech-api',
+      },
     }));
   }
 
@@ -412,8 +603,37 @@ export class WebSpeechSynthesisProvider implements SpeechSynthesisProviderInterf
     const name = voiceName.toLowerCase();
 
     // Common patterns for identifying voice gender
-    const malePatterns = ['male', 'man', 'masculine', 'alex', 'daniel', 'jorge', 'luca', 'thomas', 'aaron', 'fred'];
-    const femalePatterns = ['female', 'woman', 'feminine', 'alice', 'allison', 'ava', 'bella', 'emily', 'fiona', 'karen', 'marie', 'nora', 'samantha', 'sara', 'tessa', 'victoria', 'zoe'];
+    const malePatterns = [
+      'male',
+      'man',
+      'masculine',
+      'alex',
+      'daniel',
+      'jorge',
+      'luca',
+      'thomas',
+      'aaron',
+      'fred',
+    ];
+    const femalePatterns = [
+      'female',
+      'woman',
+      'feminine',
+      'alice',
+      'allison',
+      'ava',
+      'bella',
+      'emily',
+      'fiona',
+      'karen',
+      'marie',
+      'nora',
+      'samantha',
+      'sara',
+      'tessa',
+      'victoria',
+      'zoe',
+    ];
 
     if (malePatterns.some(pattern => name.includes(pattern))) {
       return 'male';
@@ -462,17 +682,20 @@ export class WebSpeechProvider {
     return {
       recognition: this.recognition.isAvailable(),
       synthesis: this.synthesis.isAvailable(),
-      wakeWordDetection: false // Web Speech API doesn't support wake word detection
+      wakeWordDetection: false, // Web Speech API doesn't support wake word detection
     };
   }
 
   /**
    * Initialize both recognition and synthesis
    */
-  async initialize(recognitionConfig: SpeechRecognitionProviderConfig, synthesisConfig: SpeechSynthesisProviderConfig): Promise<void> {
+  async initialize(
+    recognitionConfig: SpeechRecognitionProviderConfig,
+    synthesisConfig: SpeechSynthesisProviderConfig
+  ): Promise<void> {
     await Promise.all([
       this.recognition.initialize(recognitionConfig),
-      this.synthesis.initialize(synthesisConfig)
+      this.synthesis.initialize(synthesisConfig),
     ]);
   }
 
@@ -480,10 +703,7 @@ export class WebSpeechProvider {
    * Clean up both providers
    */
   async cleanup(): Promise<void> {
-    await Promise.all([
-      this.recognition.cleanup(),
-      this.synthesis.cleanup()
-    ]);
+    await Promise.all([this.recognition.cleanup(), this.synthesis.cleanup()]);
   }
 }
 
